@@ -1,338 +1,266 @@
-// ================================
-// APP.JS - UI & EVENT HANDLERS
-// ================================
-
-// Initialize app on page load
-document.addEventListener('DOMContentLoaded', function() {
-    updateDashboard();
-    updateSettings();
-    setupFormAutoComplete();
-});
-
-// ==================== SCREEN NAVIGATION ====================
-function switchScreenByName(screenName) {
-    // Hide all screens
-    document.querySelectorAll('.screen').forEach(screen => {
-        screen.classList.remove('active');
-    });
-
-    // Show selected screen
-    const screen = document.getElementById(screenName);
-    if (screen) {
-        screen.classList.add('active');
+// js/app.js
+class LPGApp {
+    constructor() {
+        this.currentCylinder = null;
+        this.init();
     }
 
-    // Update nav buttons
-    document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.getAttribute('data-screen') === screenName) {
-            btn.classList.add('active');
-        }
-    });
-
-    // Refresh screen-specific data
-    if (screenName === 'qrcodes') {
-        displayCylindersWithQR();
-    } else if (screenName === 'dashboard') {
-        updateDashboard();
-    } else if (screenName === 'settings') {
-        updateSettings();
-    }
-}
-
-// ==================== DASHBOARD ====================
-function updateDashboard() {
-    const stats = db.getStats();
-    
-    document.getElementById('statTotal').textContent = stats.total;
-    document.getElementById('statFull').textContent = stats.full;
-    document.getElementById('statPartial').textContent = stats.partial;
-    document.getElementById('statEmpty').textContent = stats.empty;
-    document.getElementById('statOut').textContent = stats.out;
-    document.getElementById('statWeight').textContent = stats.totalWeight;
-}
-
-// ==================== SCAN IN ====================
-function handleScanIn(event) {
-    event.preventDefault();
-
-    const glpCode = document.getElementById('glpCode').value;
-    const brand = document.getElementById('brand').value;
-    const weight = document.getElementById('weight').value;
-    const status = document.getElementById('status').value;
-
-    const result = db.addCylinder(glpCode, brand, weight, status);
-    
-    showMessage('scanInMessage', result.success, result.message);
-
-    if (result.success) {
-        event.target.reset();
-        document.getElementById('glpCode').focus();
-        updateDashboard();
-        setTimeout(() => {
-            switchScreenByName('dashboard');
-        }, 1500);
-    }
-}
-
-// ==================== SCAN OUT ====================
-let currentCylinderForRemoval = null;
-
-function handleScanOut(event) {
-    event.preventDefault();
-
-    const glpCode = document.getElementById('scanOutCode').value;
-    const result = db.findCylinder(glpCode);
-
-    if (!result.success) {
-        showMessage('scanOutMessage', false, result.message);
-        document.getElementById('cylinderDetails').classList.add('hidden');
-        return;
+    init() {
+        this.setupEventListeners();
+        this.updateDashboard();
+        this.renderInventory();
     }
 
-    // Show cylinder details
-    currentCylinderForRemoval = result.cylinder;
-    displayCylinderDetails(result.cylinder);
-    document.getElementById('cylinderDetails').classList.remove('hidden');
-    showMessage('scanOutMessage', true, 'Cylinder found. Please confirm removal.');
-}
+    setupEventListeners() {
+        // Navigation
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => this.switchSection(e.target.closest('.nav-btn').dataset.section));
+        });
 
-function displayCylinderDetails(cylinder) {
-    document.getElementById('detailCode').textContent = cylinder.glp_code;
-    document.getElementById('detailBrand').textContent = cylinder.brand;
-    document.getElementById('detailWeight').textContent = cylinder.weight + ' kg';
-    document.getElementById('detailStatus').textContent = cylinder.status;
-    document.getElementById('detailDate').textContent = new Date(cylinder.timestamp).toLocaleString();
-}
+        // Scan IN Form
+        document.getElementById('scanInForm').addEventListener('submit', (e) => this.handleScanIn(e));
 
-function confirmScanOut() {
-    if (!currentCylinderForRemoval) return;
+        // Scan OUT Form
+        document.getElementById('scanOutForm').addEventListener('submit', (e) => this.handleScanOut(e));
 
-    const result = db.removeCylinder(currentCylinderForRemoval.glp_code);
-    showMessage('scanOutMessage', result.success, result.message);
+        // Confirm Scan Out
+        document.getElementById('confirmScanOut').addEventListener('click', () => this.confirmScanOut());
 
-    if (result.success) {
-        document.getElementById('cylinderDetails').classList.add('hidden');
-        document.getElementById('scanOutCode').value = '';
-        document.getElementById('scanOutCode').focus();
-        updateDashboard();
-        
-        setTimeout(() => {
-            switchScreenByName('dashboard');
-        }, 1500);
-    }
-
-    currentCylinderForRemoval = null;
-}
-
-function cancelScanOut() {
-    document.getElementById('cylinderDetails').classList.add('hidden');
-    document.getElementById('scanOutCode').value = '';
-    document.getElementById('scanOutCode').focus();
-    currentCylinderForRemoval = null;
-}
-
-// ==================== QR CODES DISPLAY ====================
-function displayCylindersWithQR() {
-    const container = document.getElementById('qrCodeDisplay');
-    if (!container) return;
-    
-    container.innerHTML = ''; // Clear previous
-    const cylinders = db.getAll();
-    
-    if (cylinders.length === 0) {
-        container.innerHTML = '<p style="text-align: center; color: #999; width: 100%;">No cylinders in inventory</p>';
-        return;
-    }
-    
-    cylinders.forEach((cylinder, index) => {
-        const qr = generateCylinderQR(cylinder.glp_code, cylinder.weight, index + 1);
-        container.appendChild(qr);
-    });
-}
-
-function printQRCodes() {
-    const printWindow = window.open('', '', 'height=600,width=800');
-    const container = document.getElementById('qrCodeDisplay');
-    
-    if (!container || db.getAll().length === 0) {
-        alert('No cylinders to print');
-        return;
-    }
-
-    printWindow.document.write(`
-        <html>
-            <head>
-                <title>LPG Cylinder QR Codes</title>
-                <style>
-                    body { font-family: Arial, sans-serif; padding: 20px; }
-                    .qr-item { display: inline-block; margin: 10px; padding: 15px; border: 1px solid #ccc; }
-                    .qr-info { text-align: center; margin-bottom: 10px; }
-                </style>
-            </head>
-            <body>
-                <h1>LPG Cylinder QR Codes</h1>
-                <p>Generated: ${new Date().toLocaleString()}</p>
-                ${container.innerHTML}
-            </body>
-        </html>
-    `);
-    printWindow.document.close();
-    setTimeout(() => printWindow.print(), 500);
-}
-
-function downloadQRCodes() {
-    const container = document.getElementById('qrCodeDisplay');
-    
-    if (!container || db.getAll().length === 0) {
-        alert('No cylinders to download');
-        return;
-    }
-
-    const html = `
-        <!DOCTYPE html>
-        <html>
-            <head>
-                <title>LPG Cylinder QR Codes</title>
-                <style>
-                    body { font-family: Arial, sans-serif; padding: 20px; background-color: #f5f5f5; }
-                    .qr-container { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
-                    .qr-item { background: white; padding: 15px; border: 2px solid #333; border-radius: 8px; }
-                    .qr-info { text-align: center; margin-bottom: 10px; font-weight: bold; }
-                    h1 { text-align: center; }
-                </style>
-                <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-            </head>
-            <body>
-                <h1>LPG Cylinder QR Codes</h1>
-                <p style="text-align: center;">Generated: ${new Date().toLocaleString()}</p>
-                <div class="qr-container">
-                    ${container.innerHTML}
-                </div>
-            </body>
-        </html>
-    `;
-
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'lpg_qr_codes.html';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    showMessage('qrMessage', true, 'QR codes downloaded successfully!');
-}
-
-// ==================== SETTINGS & DATA MANAGEMENT ====================
-function updateSettings() {
-    const stats = db.getStats();
-    const totalRecords = db.data.length;
-    const inCount = stats.total;
-    const outCount = stats.out;
-    
-    // Calculate storage size
-    const dataString = JSON.stringify(db.data);
-    const bytes = new Blob([dataString]).size;
-    const kb = (bytes / 1024).toFixed(2);
-
-    document.getElementById('totalRecords').textContent = totalRecords;
-    document.getElementById('inInventoryCount').textContent = inCount;
-    document.getElementById('outCount').textContent = outCount;
-    document.getElementById('storageUsed').textContent = kb + ' KB';
-}
-
-function archiveRecords() {
-    const days = parseInt(document.getElementById('archiveDays').value) || 30;
-    const result = db.archiveOldRecords(days);
-    showMessage('settingsMessage', result.success, result.message);
-    if (result.success) {
-        updateSettings();
-    }
-}
-
-function exportData() {
-    const data = db.exportData();
-    const json = JSON.stringify(data, null, 2);
-    downloadFile(json, 'lpg_inventory_export.json', 'application/json');
-    showMessage('settingsMessage', true, 'Data exported successfully!');
-}
-
-function downloadCSV() {
-    const stats = db.getStats();
-    const cylinders = db.getAll();
-
-    let csv = 'LPG Cylinder Inventory Report\n';
-    csv += `Export Date: ${new Date().toLocaleString()}\n\n`;
-
-    csv += 'SUMMARY STATISTICS\n';
-    csv += `Total In Stock,Full,Partial,Empty,Out,Total Weight (kg)\n`;
-    csv += `${stats.total},${stats.full},${stats.partial},${stats.empty},${stats.out},${stats.totalWeight}\n\n`;
-
-    csv += 'INVENTORY DETAILS\n';
-    csv += 'GLP Code,Brand,Weight (kg),Status,Added Date\n';
-    cylinders.forEach(c => {
-        csv += `${c.glp_code},"${c.brand}",${c.weight},${c.status},"${new Date(c.timestamp).toLocaleString()}"\n`;
-    });
-
-    downloadFile(csv, 'lpg_inventory_export.csv', 'text/csv');
-    showMessage('settingsMessage', true, 'CSV exported successfully!');
-}
-
-function clearAllData() {
-    const result = db.clearAll();
-    showMessage('settingsMessage', result.success, result.message);
-    if (result.success) {
-        updateDashboard();
-        updateSettings();
-        displayCylindersWithQR();
-    }
-}
-
-// ==================== UTILITY FUNCTIONS ====================
-function showMessage(elementId, isSuccess, message) {
-    const element = document.getElementById(elementId);
-    if (!element) return;
-    
-    element.textContent = message;
-    element.className = 'message ' + (isSuccess ? 'message-success' : 'message-error');
-    element.style.display = 'block';
-
-    setTimeout(() => {
-        element.style.display = 'none';
-    }, 4000);
-}
-
-function downloadFile(content, filename, mimeType) {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-}
-
-function setupFormAutoComplete() {
-    // Get recent brands for auto-complete
-    const brandInput = document.getElementById('brand');
-    const recentBrands = getRecentBrands();
-
-    if (brandInput) {
-        brandInput.addEventListener('input', function() {
-            const value = this.value.toUpperCase();
-            const suggestions = recentBrands.filter(b => b.includes(value));
-            // Could enhance with a datalist or autocomplete UI
+        // Inventory Tabs
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => this.switchInventoryTab(e.target.dataset.tab));
         });
     }
+
+    switchSection(sectionId) {
+        document.querySelectorAll('.section').forEach(section => section.classList.remove('active'));
+        document.getElementById(sectionId).classList.add('active');
+
+        document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelector(`[data-section="${sectionId}"]`).classList.add('active');
+
+        if (sectionId === 'inventory') {
+            this.renderInventory();
+        }
+    }
+
+    switchInventoryTab(tab) {
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        document.getElementById(tab).classList.add('active');
+
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+
+        this.renderInventory();
+    }
+
+    handleScanIn(e) {
+        e.preventDefault();
+
+        const glpCode = document.getElementById('glpCode').value.trim().toUpperCase();
+        const brand = document.getElementById('brand').value;
+        const status = document.getElementById('status').value;
+        const weight = document.getElementById('weight').value;
+
+        const messageDiv = document.getElementById('scanInMessage');
+        messageDiv.className = 'message';
+
+        try {
+            if (!glpCode || !brand || !status || !weight) {
+                throw new Error('All fields are required');
+            }
+
+            Inventory.validateWeight(weight, status);
+
+            const cylinder = {
+                glp: glpCode,
+                brand,
+                status,
+                weight: parseFloat(weight),
+                state: 'IN'
+            };
+
+            Inventory.add(cylinder);
+
+            messageDiv.className = 'message success';
+            messageDiv.textContent = `✓ Cylinder ${glpCode} registered successfully!`;
+
+            this.generateQRForScanIn(glpCode);
+
+            document.getElementById('scanInForm').reset();
+            this.updateDashboard();
+
+            setTimeout(() => {
+                messageDiv.className = 'message';
+            }, 5000);
+
+        } catch (error) {
+            messageDiv.className = 'message error';
+            messageDiv.textContent = `✗ Error: ${error.message}`;
+        }
+    }
+
+    generateQRForScanIn(glpCode) {
+        const qrContainer = document.getElementById('qrContainer');
+        const qrGlp = document.getElementById('qrGlp');
+        
+        qrGlp.textContent = glpCode;
+        
+        setTimeout(() => {
+            QRGenerator.generateQR(glpCode, 'qrCanvas');
+            qrContainer.style.display = 'block';
+        }, 100);
+    }
+
+    handleScanOut(e) {
+        e.preventDefault();
+
+        const glpCodeOut = document.getElementById('glpCodeOut').value.trim().toUpperCase();
+        const messageDiv = document.getElementById('scanOutMessage');
+        const cylinderDetails = document.getElementById('cylinderDetails');
+
+        messageDiv.className = 'message';
+        cylinderDetails.style.display = 'none';
+
+        try {
+            if (!glpCodeOut) {
+                throw new Error('Please enter a GLP Code');
+            }
+
+            const cylinder = Inventory.findByGlp(glpCodeOut);
+
+            if (!cylinder) {
+                throw new Error(`Cylinder ${glpCodeOut} not found in inventory`);
+            }
+
+            this.currentCylinder = cylinder;
+
+            document.getElementById('detailGlp').textContent = cylinder.glp;
+            document.getElementById('detailBrand').textContent = cylinder.brand;
+            document.getElementById('detailWeight').textContent = `${cylinder.weight} kg`;
+            
+            const statusElement = document.getElementById('detailStatus');
+            statusElement.textContent = cylinder.status;
+            statusElement.className = `detail-value status-${cylinder.status.toLowerCase()}`;
+
+            setTimeout(() => {
+                QRGenerator.generateQR(cylinder.glp, 'detailQrCanvas');
+                cylinderDetails.style.display = 'block';
+            }, 100);
+
+            messageDiv.className = 'message success';
+            messageDiv.textContent = `✓ Cylinder found!`;
+
+            document.getElementById('scanOutForm').reset();
+
+        } catch (error) {
+            messageDiv.className = 'message error';
+            messageDiv.textContent = `✗ Error: ${error.message}`;
+        }
+    }
+
+    confirmScanOut() {
+        if (!this.currentCylinder) return;
+
+        try {
+            Inventory.markAsOut(this.currentCylinder.id);
+
+            const messageDiv = document.getElementById('scanOutMessage');
+            messageDiv.className = 'message success';
+            messageDiv.textContent = `✓ Cylinder ${this.currentCylinder.glp} scanned out successfully!`;
+
+            document.getElementById('cylinderDetails').style.display = 'none';
+            this.currentCylinder = null;
+
+            this.updateDashboard();
+
+            setTimeout(() => {
+                messageDiv.className = 'message';
+            }, 5000);
+
+        } catch (error) {
+            const messageDiv = document.getElementById('scanOutMessage');
+            messageDiv.className = 'message error';
+            messageDiv.textContent = `✗ Error: ${error.message}`;
+        }
+    }
+
+    renderInventory() {
+        const allCylinders = Inventory.getInStock();
+        const fullCylinders = Inventory.getFullCylinders();
+        const emptyCylinders = Inventory.getEmptyCylinders();
+
+        this.renderTab('all', allCylinders);
+        this.renderTab('full', fullCylinders);
+        this.renderTab('empty', emptyCylinders);
+    }
+
+    renderTab(tabId, cylinders) {
+        const tabContent = document.getElementById(tabId);
+        
+        if (cylinders.length === 0) {
+            tabContent.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    <p>No cylinders in this category</p>
+                </div>
+            `;
+            return;
+        }
+
+        const cardsHtml = cylinders.map(cylinder => `
+            <div class="cylinder-card">
+                <div class="card-header">
+                    <div class="glp-code">${cylinder.glp}</div>
+                    <span class="status-badge status-${cylinder.status.toLowerCase()}">${cylinder.status}</span>
+                </div>
+                <div class="card-info">
+                    <div class="info-row">
+                        <span class="info-label">Brand:</span>
+                        <span>${cylinder.brand}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Weight:</span>
+                        <span>${cylinder.weight} kg</span>
+                    </div>
+                </div>
+                <div class="card-qr" id="qr-${cylinder.id}"></div>
+                <button class="card-button" data-id="${cylinder.id}">Scan Out</button>
+            </div>
+        `).join('');
+
+        tabContent.innerHTML = `<div class="cards-grid">${cardsHtml}</div>`;
+
+        cylinders.forEach(cylinder => {
+            const qrContainer = document.getElementById(`qr-${cylinder.id}`);
+            if (qrContainer) {
+                const qrCanvas = QRGenerator.generateQRInCard(cylinder.glp);
+                qrContainer.appendChild(qrCanvas);
+            }
+        });
+
+        document.querySelectorAll('.card-button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const cylinderId = btn.dataset.id;
+                const cylinder = cylinders.find(c => c.id === cylinderId);
+                if (cylinder) {
+                    document.getElementById('glpCodeOut').value = cylinder.glp;
+                    this.switchSection('scan-out');
+                    const form = document.getElementById('scanOutForm');
+                    form.dispatchEvent(new Event('submit'));
+                }
+            });
+        });
+    }
+
+    updateDashboard() {
+        document.getElementById('totalInStock').textContent = Inventory.getInStock().length;
+        document.getElementById('fullCylinders').textContent = Inventory.getFullCylinders().length;
+        document.getElementById('emptyCylinders').textContent = Inventory.getEmptyCylinders().length;
+        document.getElementById('scannedOut').textContent = Inventory.getScannedOut().length;
+    }
 }
 
-function getRecentBrands() {
-    const brands = new Set();
-    db.data.forEach(c => brands.add(c.brand));
-    return Array.from(brands).sort();
-}
+document.addEventListener('DOMContentLoaded', () => {
+    new LPGApp();
+});
